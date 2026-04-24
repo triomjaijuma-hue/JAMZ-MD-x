@@ -1,4 +1,5 @@
-import { downloadMediaMessage } from '@whiskeysockets/baileys';
+import baileys from '@whiskeysockets/baileys';
+const { downloadMediaMessage } = baileys;
 import axios from 'axios';
 
 export default {

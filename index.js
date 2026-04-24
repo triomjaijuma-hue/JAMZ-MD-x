@@ -1,5 +1,6 @@
-import {
-    makeWASocket,
+import baileys from '@whiskeysockets/baileys';
+const {
+    default: makeWASocket,
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion,
@@ -7,7 +8,18 @@ import {
     jidDecode,
     Browsers,
     makeInMemoryStore
-} from '@whiskeysockets/baileys';
+} = baileys;
+
+export { 
+    makeWASocket, 
+    useMultiFileAuthState, 
+    DisconnectReason, 
+    fetchLatestBaileysVersion, 
+    makeCacheableSignalKeyStore, 
+    jidDecode, 
+    Browsers, 
+    makeInMemoryStore 
+};
 import pino from 'pino';
 import fs from 'fs';
 import path from 'path';
@@ -56,7 +68,7 @@ setInterval(() => {
     }
 }, 10000);
 
-let currentSock = null;
+export let currentSock = null;
 let currentQR = null;
 
 // Load Plugins
