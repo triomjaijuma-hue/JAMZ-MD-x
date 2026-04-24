@@ -1,108 +1,60 @@
-import pkg from '@whiskeysockets/baileys';
-const { 
-    default: makeWASocket, 
-    useMultiFileAuthState, 
-    DisconnectReason, 
-    fetchLatestBaileysVersion, 
-    makeCacheableSignalKeyStore, 
-    jidDecode, 
-    Browsers, 
-    makeInMemoryStore,
-    getContentType,
-    downloadMediaMessage
-} = pkg;
-
-import { decodeJid, unwrap, getMessageBody } from './lib/utils.js';
-
-export { 
+import { 
     makeWASocket, 
     useMultiFileAuthState, 
     DisconnectReason, 
     fetchLatestBaileysVersion, 
     makeCacheableSignalKeyStore, 
-    jidDecode, 
     Browsers, 
-    makeInMemoryStore,
-    decodeJid,
-    getContentType,
-    downloadMediaMessage
-};
+    makeInMemoryStore 
+} from './lib/baileys.js';
 import pino from 'pino';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import 'dotenv/config';
 import { startServer } from './lib/server.js';
 import db from './lib/database.js';
-
-// Global Error Handling
-process.on('uncaughtException', (err) => {
-    console.error('[SYSTEM] Uncaught Exception:', err);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('[SYSTEM] Unhandled Rejection at:', promise, 'reason:', reason);
-});
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import config from './lib/config.js';
+import { loadPlugins } from './lib/loader.js';
+import { handler } from './lib/handler.js';
 
 const logger = pino({ level: 'silent' });
-const plugins = new Map();
-
 const store = makeInMemoryStore({ logger });
-const storePath = './database/store.json';
 
-try {
-    if (fs.existsSync(storePath)) {
-        store.readFromFile(storePath);
-        console.log('[SYSTEM] Store loaded from file.');
-    } else {
-        console.log('[SYSTEM] No existing store found, starting fresh.');
+// Load store
+if (fs.existsSync(config.storePath)) {
+    try {
+        store.readFromFile(config.storePath);
+        console.log('[SYSTEM] Store loaded.');
+    } catch (e) {
+        console.error('[SYSTEM] Failed to load store:', e);
     }
-} catch (e) {
-    console.error('[SYSTEM] Error reading store from file:', e);
 }
 
+// Periodic store save
 setInterval(() => {
     try {
-        if (!fs.existsSync(path.dirname(storePath))) {
-            fs.mkdirSync(path.dirname(storePath), { recursive: true });
-        }
-        store.writeToFile(storePath);
+        const dir = path.dirname(config.storePath);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        store.writeToFile(config.storePath);
     } catch (e) {
-        console.error('[SYSTEM] Error writing store to file:', e);
+        console.error('[SYSTEM] Failed to save store:', e);
     }
-}, 10000);
+}, 30000);
 
 export let currentSock = null;
 let currentQR = null;
 
-// Load Plugins
-async function loadPlugins() {
-    console.log('[BOT] Loading plugins...');
-    const pluginFolder = path.join(__dirname, 'bot', 'plugins');
-    if (!fs.existsSync(pluginFolder)) {
-        fs.mkdirSync(pluginFolder, { recursive: true });
+// Memory monitoring
+setInterval(() => {
+    const used = process.memoryUsage();
+    if (used.rss > 450 * 1024 * 1024) { // 450MB warning for Railway (usually 512MB limit)
+        console.warn(`[SYSTEM] High Memory Usage: ${Math.round(used.rss / 1024 / 1024)}MB`);
     }
-
-    const files = fs.readdirSync(pluginFolder).filter(file => file.endsWith('.js'));
-    for (const file of files) {
-        try {
-            const plugin = await import(`./bot/plugins/${file}`);
-            if (plugin.default && plugin.default.name) {
-                plugins.set(plugin.default.name, plugin.default);
-                console.log(`[BOT] Loaded plugin: ${plugin.default.name}`);
-            }
-        } catch (e) {
-            console.error(`[BOT] Error loading plugin ${file}:`, e);
-        }
-    }
-    console.log(`[BOT] Successfully loaded ${plugins.size} plugins.`);
-}
+}, 60000);
 
 async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('./session');
+    console.log('[SYSTEM] Starting JAMZ-MD...');
+    const { state, saveCreds } = await useMultiFileAuthState(config.sessionPath);
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
@@ -125,21 +77,21 @@ async function startBot() {
     currentSock = sock;
     store.bind(sock.ev);
 
+    // Pairing code logic
     if (!sock.authState.creds.registered) {
-        const phoneNumber = (process.env.BOT_NUMBER || '256706106326').replace(/\D/g, '');
         setTimeout(async () => {
             try {
-                let code = await sock.requestPairingCode(phoneNumber);
-                console.log(`[BOT] Pair Code: ${code}`);
+                let code = await sock.requestPairingCode(config.pairingNumber);
+                console.log(`[BOT] Pairing Code: ${code}`);
             } catch (e) {
-                console.error('[BOT] Error requesting pairing code:', e);
+                console.error('[BOT] Failed to request pairing code:', e);
             }
-        }, 3000);
+        }, 5000);
     }
 
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', (update) => {
+    sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
         if (qr) currentQR = qr;
 
@@ -148,101 +100,56 @@ async function startBot() {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
             console.log(`[BOT] Connection closed (Reason: ${statusCode}). Reconnecting: ${shouldReconnect}`);
-            if (shouldReconnect) startBot();
+            
+            if (shouldReconnect) {
+                // Exponential backoff or simple delay
+                setTimeout(() => startBot(), 5000);
+            } else {
+                console.log('[BOT] Logged out. Please delete the session folder and restart.');
+                process.exit(0);
+            }
         } else if (connection === 'open') {
             currentQR = null;
-            console.log('[BOT] JAMZ-MD Connected!');
+            console.log('[BOT] JAMZ-MD is now Online!');
         }
     });
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
-        const msg = messages[0];
-        if (!msg.message) return;
-
-        const from = msg.key.remoteJid;
-
-        // Anti-Delete logic
-        if (msg.message.protocolMessage && msg.message.protocolMessage.type === 3) {
-            const key = msg.message.protocolMessage.key;
-            
-            const database = db.get();
-            const isAntiDeleteEnabled = database.groups[from]?.antidelete || database.settings.antidelete;
-            
-            if (isAntiDeleteEnabled) {
-                try {
-                    const deletedMsg = await store.loadMessage(from, key.id);
-                    if (deletedMsg && deletedMsg.message) {
-                        const participant = decodeJid(deletedMsg.key.participant || deletedMsg.key.remoteJid);
-                        await sock.sendMessage(from, { 
-                            text: `🛡️ *JAMZ-MD ANTI-DELETE*\n\n*From:* @${participant.split('@')[0]}\n*Time:* ${new Date().toLocaleString()}`,
-                            mentions: [participant]
-                        });
-                        await sock.sendMessage(from, { forward: deletedMsg }, { quoted: deletedMsg });
-                    }
-                } catch (e) {
-                    console.error('Anti-Delete Error:', e);
-                }
-            }
-        }
-
-        // Sender & Owner Detection
-        const botId = sock.user?.id ? decodeJid(sock.user.id) : null;
-        const ownerNumber = (process.env.BOT_OWNER_WA_ID || '256706106326').replace(/\D/g, '');
-        
-        const sender = decodeJid(msg.key.fromMe ? botId : (msg.key.participant || msg.key.remoteJid));
-        const isOwner = (sender && sender.split('@')[0] === ownerNumber) || (botId && botId.split('@')[0] === ownerNumber);
-
-        // Bypass fromMe for Owner
-        if (msg.key.fromMe && !isOwner) {
-            console.log(`[MSG] Ignored: fromMe and not owner (${msg.key.id})`);
-            return;
-        }
-
-        // Comprehensive Unwrapping and Body Extraction
-        msg.message = unwrap(msg.message);
-        const body = getMessageBody(msg);
-
-        const messageType = getContentType(msg.message) || 'unknown';
-        console.log(`[MSG] From: ${sender} | Type: ${messageType} | Body: ${body.slice(0, 50).replace(/\n/g, ' ')}`);
-        
-        const prefixes = ['.', '/', '🫠', '#'];
-        const prefix = prefixes.find(p => body.startsWith(p));
-        
-        if (!prefix) {
-            const database = db.get();
-            const isAIOn = database.groups[from]?.aion || database.settings.aion;
-            if (isAIOn && body && !msg.key.fromMe) {
-                const gptPlugin = plugins.get('gpt');
-                if (gptPlugin) {
-                    await gptPlugin.execute(sock, msg, { args: body.split(/ +/), body, text: body, prefix: '', commandName: 'gpt', isOwner, plugins });
-                }
-            }
-            return;
-        }
-
-        const args = body.slice(prefix.length).trim().split(/ +/);
-        const commandName = args.shift().toLowerCase();
-        const text = args.join(' ');
-        
-        const command = plugins.get(commandName) || 
-                        Array.from(plugins.values()).find(p => p.alias && p.alias.includes(commandName));
-
-        if (command) {
-            console.log(`[CMD] Executing: ${commandName} for ${sender}`);
-            try {
-                await command.execute(sock, msg, { args, body, text, prefix, commandName, isOwner, plugins });
-            } catch (e) {
-                console.error(`Error executing command ${commandName}:`, e);
-                await sock.sendMessage(from, { text: 'An error occurred while executing the command.' }, { quoted: msg });
-            }
-        } else {
-            console.log(`[CMD] Command not found: ${commandName}`);
+        for (const m of messages) {
+            await handler(sock, m, store);
         }
     });
 
     return sock;
 }
+
+// Global Exception Handling
+process.on('uncaughtException', (err) => {
+    console.error('[FATAL] Uncaught Exception:', err);
+    // On Railway, we might want to stay alive if possible, but some errors are fatal
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+// Handle termination
+const gracefulShutdown = () => {
+    console.log('[SYSTEM] Shutting down gracefully...');
+    try {
+        const dir = path.dirname(config.storePath);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        store.writeToFile(config.storePath);
+        console.log('[SYSTEM] Store saved.');
+    } catch (e) {
+        console.error('[SYSTEM] Failed to save store during shutdown:', e);
+    }
+    process.exit(0);
+};
+
+process.on('SIGINT', gracefulShutdown);
+process.on('SIGTERM', gracefulShutdown);
 
 async function main() {
     try {
@@ -250,7 +157,7 @@ async function main() {
         await startBot();
         startServer(() => ({ sock: currentSock, qr: currentQR }));
     } catch (e) {
-        console.error('[SYSTEM] Critical error during startup:', e);
+        console.error('[SYSTEM] Critical startup error:', e);
         process.exit(1);
     }
 }
