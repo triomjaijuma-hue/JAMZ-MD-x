@@ -1,0 +1,23 @@
+{
+  "name": "jamz-md",
+  "version": "6.0.0",
+  "description": "JAMZ-MD v6.0.0 WhatsApp Bot",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.8",
+    "pino": "^9.0.0",
+    "qrcode-terminal": "^0.12.0",
+    "dotenv": "^16.4.5",
+    "axios": "^1.6.8",
+    "node-fetch": "^3.3.2",
+    "fluent-ffmpeg": "^2.1.2",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "sharp": "^0.33.3",
+    "jimp": "^0.22.12",
+    "openai": "^4.38.3"
+  }
+}
