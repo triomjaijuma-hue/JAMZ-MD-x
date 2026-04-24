@@ -1,3 +1,5 @@
+import { decodeJid } from '../../lib/utils.js';
+
 export default {
     name: 'menu',
     alias: ['help', 'list'],
@@ -25,7 +27,7 @@ export default {
         const timeStr = date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
         const pushname = msg.pushName || 'User';
-        const sender = msg.key.fromMe ? (sock.user.id.split(':')[0] + '@s.whatsapp.net') : (msg.key.participant || msg.key.remoteJid);
+        const sender = decodeJid(msg.key.fromMe ? sock.user.id : (msg.key.participant || msg.key.remoteJid));
 
         let menuText = `╭═══〔 *JAMZ-MD v6.0.0* 〕═══⊷\n`;
         menuText += `┃ 👤 *User:* ${pushname}\n`;

@@ -1,3 +1,5 @@
+import { decodeJid } from '../../lib/utils.js';
+
 export default {
     name: 'getpp',
     alias: ['getprofilepic'],
@@ -5,11 +7,11 @@ export default {
     category: 'general',
     usage: 'getpp @user',
     execute: async (sock, msg, { text }) => {
-        let user = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || 
+        let user = decodeJid(msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || 
                    msg.message?.extendedTextMessage?.contextInfo?.participant ||
-                   text.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+                   (text.replace(/[^0-9]/g, '') ? text.replace(/[^0-9]/g, '') + '@s.whatsapp.net' : null));
         
-        if (!user || user.length < 10) user = msg.key.remoteJid;
+        if (!user || user.length < 10) user = decodeJid(msg.key.remoteJid);
 
         try {
             const ppUrl = await sock.profilePictureUrl(user, 'image');

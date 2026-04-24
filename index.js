@@ -1,26 +1,18 @@
-import * as baileysNS from '@whiskeysockets/baileys';
+import pkg from '@whiskeysockets/baileys';
+const { 
+    default: makeWASocket, 
+    useMultiFileAuthState, 
+    DisconnectReason, 
+    fetchLatestBaileysVersion, 
+    makeCacheableSignalKeyStore, 
+    jidDecode, 
+    Browsers, 
+    makeInMemoryStore,
+    getContentType,
+    downloadMediaMessage
+} = pkg;
 
-// Robust export extraction helper
-const getBaileysExport = (prop) => {
-    if (baileysNS[prop] !== undefined) return baileysNS[prop];
-    if (baileysNS.default && typeof baileysNS.default === 'object' && baileysNS.default[prop] !== undefined) {
-        return baileysNS.default[prop];
-    }
-    return undefined;
-};
-
-// Resolve makeWASocket specifically as it can be the default export itself
-const makeWASocket = (typeof baileysNS.default === 'function') 
-    ? baileysNS.default 
-    : (getBaileysExport('makeWASocket') || baileysNS.default);
-
-const useMultiFileAuthState = getBaileysExport('useMultiFileAuthState');
-const DisconnectReason = getBaileysExport('DisconnectReason');
-const fetchLatestBaileysVersion = getBaileysExport('fetchLatestBaileysVersion');
-const makeCacheableSignalKeyStore = getBaileysExport('makeCacheableSignalKeyStore');
-const jidDecode = getBaileysExport('jidDecode');
-const Browsers = getBaileysExport('Browsers');
-const makeInMemoryStore = getBaileysExport('makeInMemoryStore');
+import { decodeJid, unwrap, getMessageBody } from './lib/utils.js';
 
 export { 
     makeWASocket, 
@@ -30,7 +22,10 @@ export {
     makeCacheableSignalKeyStore, 
     jidDecode, 
     Browsers, 
-    makeInMemoryStore 
+    makeInMemoryStore,
+    decodeJid,
+    getContentType,
+    downloadMediaMessage
 };
 import pino from 'pino';
 import fs from 'fs';
@@ -178,7 +173,7 @@ async function startBot() {
                 try {
                     const deletedMsg = await store.loadMessage(from, key.id);
                     if (deletedMsg && deletedMsg.message) {
-                        const participant = deletedMsg.key.participant || deletedMsg.key.remoteJid;
+                        const participant = decodeJid(deletedMsg.key.participant || deletedMsg.key.remoteJid);
                         await sock.sendMessage(from, { 
                             text: `🛡️ *JAMZ-MD ANTI-DELETE*\n\n*From:* @${participant.split('@')[0]}\n*Time:* ${new Date().toLocaleString()}`,
                             mentions: [participant]
@@ -192,10 +187,10 @@ async function startBot() {
         }
 
         // Sender & Owner Detection
-        const botId = sock.user?.id ? (jidDecode(sock.user.id)?.user + '@s.whatsapp.net') : null;
+        const botId = sock.user?.id ? decodeJid(sock.user.id) : null;
         const ownerNumber = (process.env.BOT_OWNER_WA_ID || '256706106326').replace(/\D/g, '');
         
-        const sender = msg.key.fromMe ? botId : (msg.key.participant || msg.key.remoteJid);
+        const sender = decodeJid(msg.key.fromMe ? botId : (msg.key.participant || msg.key.remoteJid));
         const isOwner = (sender && sender.split('@')[0] === ownerNumber) || (botId && botId.split('@')[0] === ownerNumber);
 
         // Bypass fromMe for Owner
@@ -204,36 +199,11 @@ async function startBot() {
             return;
         }
 
-        // Comprehensive Unwrapping
-        const unwrap = (m) => {
-            if (!m) return m;
-            if (m.ephemeralMessage) return unwrap(m.ephemeralMessage.message);
-            if (m.viewOnceMessage) return unwrap(m.viewOnceMessage.message);
-            if (m.viewOnceMessageV2) return unwrap(m.viewOnceMessageV2.message);
-            if (m.viewOnceMessageV2Extension) return unwrap(m.viewOnceMessageV2Extension.message);
-            if (m.documentWithCaptionMessage) return unwrap(m.documentWithCaptionMessage.message);
-            return m;
-        };
+        // Comprehensive Unwrapping and Body Extraction
         msg.message = unwrap(msg.message);
+        const body = getMessageBody(msg);
 
-        let body = (
-            msg.message?.conversation ||
-            msg.message?.extendedTextMessage?.text ||
-            msg.message?.imageMessage?.caption ||
-            msg.message?.videoMessage?.caption ||
-            msg.message?.buttonsResponseMessage?.selectedButtonId ||
-            msg.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
-            msg.message?.templateButtonReplyMessage?.selectedId ||
-            msg.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson ||
-            msg.message?.documentMessage?.caption ||
-            ''
-        );
-        // Handle interactive JSON if applicable
-        if (body && body.includes('"id":')) {
-            try { body = JSON.parse(body).id; } catch {}
-        }
-
-        const messageType = Object.keys(msg.message)[0] || 'unknown';
+        const messageType = getContentType(msg.message) || 'unknown';
         console.log(`[MSG] From: ${sender} | Type: ${messageType} | Body: ${body.slice(0, 50).replace(/\n/g, ' ')}`);
         
         const prefixes = ['.', '/', '🫠', '#'];
