@@ -1,11 +1,24 @@
 {
   "name": "jamz-md",
-  "version": "6.0.0",
-  "description": "JAMZ-MD v6.0.0 WhatsApp Bot",
+  "version": "1.2.0",
+  "description": "JAMZ-MD v1.2.0 - Production-Ready WhatsApp Bot Built on MEGA-MD Architecture",
   "main": "index.js",
   "type": "module",
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "baileys",
+    "mega-md",
+    "jamz-md",
+    "automation"
+  ],
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --check index.js"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
@@ -35,5 +48,15 @@
     "qrcode-terminal": "^0.12.0",
     "sharp": "^0.33.3",
     "yt-search": "^2.13.1"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/triomjaijuma-hue/JAMZ-MD-x.git"
+  },
+  "bugs": {
+    "url": "https://github.com/triomjaijuma-hue/JAMZ-MD-x/issues"
+  },
+  "homepage": "https://github.com/triomjaijuma-hue/JAMZ-MD-x#readme",
+  "author": "triomjaijuma-hue",
+  "license": "MIT"
 }
