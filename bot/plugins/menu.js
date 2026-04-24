@@ -20,11 +20,18 @@ export default {
         const seconds = Math.floor(uptime % 60);
         const uptimeStr = `${days > 0 ? days + 'd ' : ''}${hours}h ${minutes}m ${seconds}s`;
 
-        const pushname = msg.pushName || 'User';
+        const date = new Date();
+        const dateStr = date.toLocaleDateString('en-GB');
+        const timeStr = date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-        let menuText = `╭━━━〔 *JAMZ-MD v6.0.0* 〕━━━┈⊷\n`;
+        const pushname = msg.pushName || 'User';
+        const sender = msg.key.fromMe ? (sock.user.id.split(':')[0] + '@s.whatsapp.net') : (msg.key.participant || msg.key.remoteJid);
+
+        let menuText = `╭═══〔 *JAMZ-MD v6.0.0* 〕═══⊷\n`;
         menuText += `┃ 👤 *User:* ${pushname}\n`;
         menuText += `┃ 🕒 *Uptime:* ${uptimeStr}\n`;
+        menuText += `┃ 📅 *Date:* ${dateStr}\n`;
+        menuText += `┃ ⏰ *Time:* ${timeStr}\n`;
         menuText += `┃ ⌨️ *Prefix:* ${prefix}\n`;
         menuText += `┃ 📦 *Commands:* ${plugins.size}\n`;
         menuText += `╰━━━━━━━━━━━━━━━━━━━━┈⊷\n\n`;
@@ -33,7 +40,7 @@ export default {
 
         for (const cat of sortedCategories) {
             const cmds = categories[cat];
-            menuText += `╭━━━〔 *${cat.toUpperCase()}* 〕━━━┈⊷\n`;
+            menuText += `╭═══〔 *${cat.toUpperCase()}* 〕═══⊷\n`;
             cmds.sort().forEach(cmd => {
                 menuText += `┃ ▢ ${prefix}${cmd}\n`;
             });
@@ -42,14 +49,22 @@ export default {
 
         menuText += `*JAMZ-MD v6.0.0* - Simple & Powerful 🫠`;
 
+        let ppUrl;
+        try {
+            ppUrl = await sock.profilePictureUrl(sender, 'image');
+        } catch (error) {
+            ppUrl = 'https://github.com/jumaxjaitom-x.png'; // Fallback
+        }
+
         await sock.sendMessage(msg.key.remoteJid, { 
-            text: menuText,
+            image: { url: ppUrl },
+            caption: menuText,
             contextInfo: {
                 externalAdReply: {
                     title: 'JAMZ-MD v6.0.0 MENU',
                     body: 'A Powerful WhatsApp Bot',
                     mediaType: 1,
-                    thumbnailUrl: 'https://github.com/jumaxjaitom-x.png',
+                    thumbnailUrl: ppUrl,
                     sourceUrl: 'https://github.com/jumaxjaitom-x/JAMZ-MD-',
                     renderLargerThumbnail: true,
                     showAdAttribution: true
