@@ -1,16 +1,7 @@
-import * as baileysNS from '@whiskeysockets/baileys';
-
-// Robust export extraction helper
-const getBaileysExport = (prop) => {
-    if (baileysNS[prop] !== undefined) return baileysNS[prop];
-    if (baileysNS.default && typeof baileysNS.default === 'object' && baileysNS.default[prop] !== undefined) {
-        return baileysNS.default[prop];
-    }
-    return undefined;
-};
-
-const downloadMediaMessage = getBaileysExport('downloadMediaMessage');
+import pkg from '@whiskeysockets/baileys';
+const { downloadMediaMessage } = pkg;
 import axios from 'axios';
+import { decodeJid } from '../../lib/utils.js';
 
 export default {
     name: 'setpp',
@@ -51,7 +42,7 @@ export default {
 
             if (!buffer) throw new Error('Failed to obtain image buffer.');
 
-            await sock.updateProfilePicture(sock.user.id.split(':')[0] + '@s.whatsapp.net', buffer);
+            await sock.updateProfilePicture(decodeJid(sock.user.id), buffer);
             await sock.sendMessage(msg.key.remoteJid, { text: '✅ Successfully updated profile picture!' }, { quoted: msg });
         } catch (e) {
             console.error('Error in setpp:', e);
