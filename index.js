@@ -42,6 +42,7 @@ async function loadPlugins() {
             console.error(`Error loading plugin ${file}:`, e);
         }
     }
+    console.log(`Successfully loaded ${plugins.size} plugins.`);
 }
 
 async function startBot() {
@@ -98,31 +99,58 @@ async function startBot() {
         if (!msg.message) return;
         if (msg.key.fromMe) return;
 
+        // Unwrap nested messages (ephemeral, view-once, etc.)
+        const unwrap = (m) => {
+            if (m?.ephemeralMessage) return unwrap(m.ephemeralMessage.message);
+            if (m?.viewOnceMessage) return unwrap(m.viewOnceMessage.message);
+            if (m?.viewOnceMessageV2) return unwrap(m.viewOnceMessageV2.message);
+            if (m?.documentWithCaptionMessage) return unwrap(m.documentWithCaptionMessage.message);
+            return m;
+        };
+        msg.message = unwrap(msg.message);
+
         const from = msg.key.remoteJid;
-        const body = (msg.message.conversation || 
-                      msg.message.extendedTextMessage?.text || 
-                      msg.message.imageMessage?.caption || 
-                      msg.message.videoMessage?.caption || '') ;
+        const sender = msg.key.participant || msg.key.remoteJid;
+        const body = (
+            msg.message?.conversation ||
+            msg.message?.extendedTextMessage?.text ||
+            msg.message?.imageMessage?.caption ||
+            msg.message?.videoMessage?.caption ||
+            msg.message?.buttonsResponseMessage?.selectedButtonId ||
+            msg.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
+            msg.message?.templateButtonReplyMessage?.selectedId ||
+            msg.message?.documentMessage?.caption ||
+            ''
+        );
+
+        console.log(`[MSG] From: ${sender}, Type: ${Object.keys(msg.message)[0] || 'unknown'}, Body: ${body.slice(0, 50)}`);
         
         const prefixes = ['.', '/', '🫠', '#'];
         const prefix = prefixes.find(p => body.startsWith(p));
-        if (!prefix) return;
+        
+        if (!prefix) {
+            console.log(`[MSG] No prefix found for: ${body.slice(0, 20)}...`);
+            return;
+        }
 
         const args = body.slice(prefix.length).trim().split(/ +/);
         const commandName = args.shift().toLowerCase();
+        const text = args.join(' ');
         
         const command = plugins.get(commandName) || 
                         Array.from(plugins.values()).find(p => p.alias && p.alias.includes(commandName));
 
         if (command) {
+            console.log(`[CMD] Executing: ${commandName} for ${sender}`);
             try {
-                const sender = msg.key.participant || msg.key.remoteJid;
                 const isOwner = sender.split('@')[0] === (process.env.BOT_OWNER_WA_ID?.split('@')[0] || '256706106326');
-                await command.execute(sock, msg, { args, body, prefix, commandName, isOwner, plugins });
+                await command.execute(sock, msg, { args, body, text, prefix, commandName, isOwner, plugins });
             } catch (e) {
                 console.error(`Error executing command ${commandName}:`, e);
                 await sock.sendMessage(from, { text: 'An error occurred while executing the command.' }, { quoted: msg });
             }
+        } else {
+            console.log(`[CMD] Command not found: ${commandName}`);
         }
     });
 
