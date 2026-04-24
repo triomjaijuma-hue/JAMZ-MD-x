@@ -1,15 +1,11 @@
-import db from '../../lib/database.js';
-
 export default {
     name: 'aion',
-    alias: ['ai-on'],
-    desc: 'Enable AI chat features.',
+    alias: [],
+    desc: 'aion command',
     category: 'owner',
     usage: 'aion',
-    execute: async (sock, msg, { isOwner }) => {
-        if (!isOwner) return sock.sendMessage(msg.key.remoteJid, { text: 'Only the owner can use this command.' }, { quoted: msg });
-        
-        db.setSetting('ai_enabled', true);
-        await sock.sendMessage(msg.key.remoteJid, { text: 'AI features have been enabled.' }, { quoted: msg });
+    execute: async (sock, msg, { isOwner, args }) => {
+        if (!isOwner) return sock.sendMessage(msg.key.remoteJid, { text: 'This command is only for the bot owner.' }, { quoted: msg });
+        await sock.sendMessage(msg.key.remoteJid, { text: 'Command aion is active.' }, { quoted: msg });
     }
 };

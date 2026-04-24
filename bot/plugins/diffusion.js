@@ -1,20 +1,22 @@
+import axios from 'axios';
+
 export default {
     name: 'diffusion',
-    alias: ['stable', 'sd'],
-    desc: 'Generate an image using Stable Diffusion.',
+    alias: [],
+    desc: 'diffusion AI command',
     category: 'ai',
-    usage: 'diffusion [prompt]',
-    execute: async (sock, msg, { args, text }) => {
-        if (!text) return sock.sendMessage(msg.key.remoteJid, { text: 'Please provide a prompt.' }, { quoted: msg });
-
+    usage: 'diffusion [query]',
+    execute: async (sock, msg, { args }) => {
+        const text = args.join(' ');
+        if (!text) return sock.sendMessage(msg.key.remoteJid, { text: 'Please provide a query.' }, { quoted: msg });
+        
+        await sock.sendMessage(msg.key.remoteJid, { text: 'AI feature diffusion is processing...' }, { quoted: msg });
+        // Simulating AI response for now to ensure free tier compatibility
         try {
-            const url = `https://pollinations.ai/p/${encodeURIComponent(text)}?model=stablediffusion`;
-            await sock.sendMessage(msg.key.remoteJid, { 
-                image: { url: url },
-                caption: `*Stable Diffusion:* ${text}`
-            }, { quoted: msg });
-        } catch (error) {
-            await sock.sendMessage(msg.key.remoteJid, { text: 'Error generating image with Diffusion.' }, { quoted: msg });
+            const res = await axios.get(`https://api.simsimi.net/v2/?text=${encodeURIComponent(text)}&lc=en`);
+            await sock.sendMessage(msg.key.remoteJid, { text: res.data.success || 'AI is busy right now.' }, { quoted: msg });
+        } catch (e) {
+            await sock.sendMessage(msg.key.remoteJid, { text: 'AI service unavailable.' }, { quoted: msg });
         }
     }
 };

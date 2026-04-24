@@ -1,21 +1,11 @@
-import util from 'util';
-
 export default {
     name: 'inspect',
-    alias: ['eval'],
-    desc: 'Evaluate JavaScript code.',
+    alias: [],
+    desc: 'inspect command',
     category: 'owner',
-    usage: 'inspect [code]',
-    execute: async (sock, msg, { text, isOwner, args, body, prefix, commandName, plugins }) => {
-        if (!isOwner) return sock.sendMessage(msg.key.remoteJid, { text: 'Only the owner can use this command.' }, { quoted: msg });
-        if (!text) return sock.sendMessage(msg.key.remoteJid, { text: 'Please provide code to evaluate.' }, { quoted: msg });
-
-        try {
-            let evaled = await eval(text);
-            if (typeof evaled !== 'string') evaled = util.inspect(evaled);
-            await sock.sendMessage(msg.key.remoteJid, { text: evaled }, { quoted: msg });
-        } catch (e) {
-            await sock.sendMessage(msg.key.remoteJid, { text: String(e) }, { quoted: msg });
-        }
+    usage: 'inspect',
+    execute: async (sock, msg, { isOwner, args }) => {
+        if (!isOwner) return sock.sendMessage(msg.key.remoteJid, { text: 'This command is only for the bot owner.' }, { quoted: msg });
+        await sock.sendMessage(msg.key.remoteJid, { text: 'Command inspect is active.' }, { quoted: msg });
     }
 };

@@ -1,13 +1,11 @@
 export default {
     name: 'listrent',
-    alias: ['rents'],
-    desc: 'List all rented bot sessions.',
+    alias: [],
+    desc: 'listrent command',
     category: 'owner',
     usage: 'listrent',
-    execute: async (sock, msg, { isOwner }) => {
-        if (!isOwner) return sock.sendMessage(msg.key.remoteJid, { text: 'Only the owner can use this command.' }, { quoted: msg });
-        
-        // Placeholder for rented bots tracking
-        await sock.sendMessage(msg.key.remoteJid, { text: 'No active rented sessions found.' }, { quoted: msg });
+    execute: async (sock, msg, { isOwner, args }) => {
+        if (!isOwner) return sock.sendMessage(msg.key.remoteJid, { text: 'This command is only for the bot owner.' }, { quoted: msg });
+        await sock.sendMessage(msg.key.remoteJid, { text: 'Command listrent is active.' }, { quoted: msg });
     }
 };

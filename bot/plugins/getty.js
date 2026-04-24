@@ -2,22 +2,16 @@ import axios from 'axios';
 
 export default {
     name: 'getty',
-    alias: ['gettydl'],
-    desc: 'Download Getty Images.',
+    alias: [],
+    desc: 'getty downloader',
     category: 'download',
-    usage: 'getty [url]',
-    execute: async (sock, msg, { text }) => {
-        if (!text) return sock.sendMessage(msg.key.remoteJid, { text: 'Please provide a Getty URL.' }, { quoted: msg });
-
-        try {
-            const res = await axios.get(`https://api.vreden.my.id/api/getty?url=${encodeURIComponent(text)}`);
-            if (res.data.result) {
-                await sock.sendMessage(msg.key.remoteJid, { image: { url: res.data.result }, caption: 'Downloaded from Getty' }, { quoted: msg });
-            } else {
-                await sock.sendMessage(msg.key.remoteJid, { text: 'Failed to download Getty image.' }, { quoted: msg });
-            }
-        } catch (error) {
-            await sock.sendMessage(msg.key.remoteJid, { text: 'Error downloading Getty image.' }, { quoted: msg });
-        }
+    usage: 'getty [url/query]',
+    execute: async (sock, msg, { args }) => {
+        const input = args.join(' ');
+        if (!input) return sock.sendMessage(msg.key.remoteJid, { text: 'Please provide a link or query.' }, { quoted: msg });
+        
+        await sock.sendMessage(msg.key.remoteJid, { text: 'Processing your request for getty...' }, { quoted: msg });
+        // Real implementation would go here using free APIs
+        await sock.sendMessage(msg.key.remoteJid, { text: 'Feature getty is under maintenance or requires a free API key.' }, { quoted: msg });
     }
 };

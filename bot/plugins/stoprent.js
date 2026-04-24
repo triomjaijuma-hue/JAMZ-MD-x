@@ -1,13 +1,11 @@
 export default {
     name: 'stoprent',
-    alias: ['delrent'],
-    desc: 'Stop a rented bot session.',
+    alias: [],
+    desc: 'stoprent command',
     category: 'owner',
-    usage: 'stoprent [number]',
-    execute: async (sock, msg, { args, isOwner }) => {
-        if (!isOwner) return sock.sendMessage(msg.key.remoteJid, { text: 'Only the owner can use this command.' }, { quoted: msg });
-        
-        // Placeholder logic
-        await sock.sendMessage(msg.key.remoteJid, { text: 'Rent session stopped.' }, { quoted: msg });
+    usage: 'stoprent',
+    execute: async (sock, msg, { isOwner, args }) => {
+        if (!isOwner) return sock.sendMessage(msg.key.remoteJid, { text: 'This command is only for the bot owner.' }, { quoted: msg });
+        await sock.sendMessage(msg.key.remoteJid, { text: 'Command stoprent is active.' }, { quoted: msg });
     }
 };

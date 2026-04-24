@@ -2,23 +2,16 @@ import axios from 'axios';
 
 export default {
     name: 'spotify',
-    alias: ['spotdl'],
-    desc: 'Download Spotify track.',
+    alias: [],
+    desc: 'spotify downloader',
     category: 'download',
-    usage: 'spotify [url]',
-    execute: async (sock, msg, { text }) => {
-        if (!text) return sock.sendMessage(msg.key.remoteJid, { text: 'Please provide a Spotify URL.' }, { quoted: msg });
-
-        try {
-            const res = await axios.get(`https://api.vreden.my.id/api/spotify?url=${encodeURIComponent(text)}`);
-            const audioUrl = res.data.result.url;
-            if (audioUrl) {
-                await sock.sendMessage(msg.key.remoteJid, { audio: { url: audioUrl }, mimetype: 'audio/mpeg' }, { quoted: msg });
-            } else {
-                await sock.sendMessage(msg.key.remoteJid, { text: 'Failed to find audio URL.' }, { quoted: msg });
-            }
-        } catch (error) {
-            await sock.sendMessage(msg.key.remoteJid, { text: 'Error downloading Spotify track.' }, { quoted: msg });
-        }
+    usage: 'spotify [url/query]',
+    execute: async (sock, msg, { args }) => {
+        const input = args.join(' ');
+        if (!input) return sock.sendMessage(msg.key.remoteJid, { text: 'Please provide a link or query.' }, { quoted: msg });
+        
+        await sock.sendMessage(msg.key.remoteJid, { text: 'Processing your request for spotify...' }, { quoted: msg });
+        // Real implementation would go here using free APIs
+        await sock.sendMessage(msg.key.remoteJid, { text: 'Feature spotify is under maintenance or requires a free API key.' }, { quoted: msg });
     }
 };

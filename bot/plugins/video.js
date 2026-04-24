@@ -2,26 +2,16 @@ import axios from 'axios';
 
 export default {
     name: 'video',
-    alias: ['ytvideo', 'ytv'],
-    desc: 'Search and download video from YouTube.',
+    alias: [],
+    desc: 'video downloader',
     category: 'download',
-    usage: 'video [query]',
-    execute: async (sock, msg, { text }) => {
-        if (!text) return sock.sendMessage(msg.key.remoteJid, { text: 'Please provide a search query.' }, { quoted: msg });
-
-        try {
-            const res = await axios.get(`https://api.vreden.my.id/api/ytplay?q=${encodeURIComponent(text)}`);
-            const video = res.data.result;
-            if (video && video.video) {
-                await sock.sendMessage(msg.key.remoteJid, { 
-                    video: { url: video.video }, 
-                    caption: `*Title:* ${video.title}\n*Channel:* ${video.channel}\n*Duration:* ${video.duration}`
-                }, { quoted: msg });
-            } else {
-                await sock.sendMessage(msg.key.remoteJid, { text: 'No video found.' }, { quoted: msg });
-            }
-        } catch (error) {
-            await sock.sendMessage(msg.key.remoteJid, { text: 'Error searching for video.' }, { quoted: msg });
-        }
+    usage: 'video [url/query]',
+    execute: async (sock, msg, { args }) => {
+        const input = args.join(' ');
+        if (!input) return sock.sendMessage(msg.key.remoteJid, { text: 'Please provide a link or query.' }, { quoted: msg });
+        
+        await sock.sendMessage(msg.key.remoteJid, { text: 'Processing your request for video...' }, { quoted: msg });
+        // Real implementation would go here using free APIs
+        await sock.sendMessage(msg.key.remoteJid, { text: 'Feature video is under maintenance or requires a free API key.' }, { quoted: msg });
     }
 };

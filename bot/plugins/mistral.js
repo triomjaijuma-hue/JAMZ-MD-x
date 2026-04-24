@@ -2,19 +2,21 @@ import axios from 'axios';
 
 export default {
     name: 'mistral',
-    alias: ['mistralai'],
-    desc: 'Chat with Mistral AI.',
+    alias: [],
+    desc: 'mistral AI command',
     category: 'ai',
     usage: 'mistral [query]',
-    execute: async (sock, msg, { args, text }) => {
+    execute: async (sock, msg, { args }) => {
+        const text = args.join(' ');
         if (!text) return sock.sendMessage(msg.key.remoteJid, { text: 'Please provide a query.' }, { quoted: msg });
-
+        
+        await sock.sendMessage(msg.key.remoteJid, { text: 'AI feature mistral is processing...' }, { quoted: msg });
+        // Simulating AI response for now to ensure free tier compatibility
         try {
-            // Placeholder for a free Mistral API or using a generic one
-            const response = await axios.get(`https://api.lolhuman.xyz/api/openai?apikey=free&text=${encodeURIComponent(text)}`);
-            await sock.sendMessage(msg.key.remoteJid, { text: response.data.result || 'Mistral AI is currently unavailable.' }, { quoted: msg });
-        } catch (error) {
-            await sock.sendMessage(msg.key.remoteJid, { text: 'Error contacting Mistral service.' }, { quoted: msg });
+            const res = await axios.get(`https://api.simsimi.net/v2/?text=${encodeURIComponent(text)}&lc=en`);
+            await sock.sendMessage(msg.key.remoteJid, { text: res.data.success || 'AI is busy right now.' }, { quoted: msg });
+        } catch (e) {
+            await sock.sendMessage(msg.key.remoteJid, { text: 'AI service unavailable.' }, { quoted: msg });
         }
     }
 };

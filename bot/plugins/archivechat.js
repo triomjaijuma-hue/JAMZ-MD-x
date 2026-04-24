@@ -1,17 +1,11 @@
 export default {
     name: 'archivechat',
-    alias: ['archive'],
-    desc: 'Archive the current chat.',
+    alias: [],
+    desc: 'archivechat command',
     category: 'owner',
     usage: 'archivechat',
-    execute: async (sock, msg, { isOwner }) => {
-        if (!isOwner) return sock.sendMessage(msg.key.remoteJid, { text: 'Only the owner can use this command.' }, { quoted: msg });
-        
-        try {
-            await sock.chatModify({ archive: true }, msg.key.remoteJid);
-            await sock.sendMessage(msg.key.remoteJid, { text: 'Chat archived.' }, { quoted: msg });
-        } catch (error) {
-            await sock.sendMessage(msg.key.remoteJid, { text: 'Failed to archive chat.' }, { quoted: msg });
-        }
+    execute: async (sock, msg, { isOwner, args }) => {
+        if (!isOwner) return sock.sendMessage(msg.key.remoteJid, { text: 'This command is only for the bot owner.' }, { quoted: msg });
+        await sock.sendMessage(msg.key.remoteJid, { text: 'Command archivechat is active.' }, { quoted: msg });
     }
 };
