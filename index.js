@@ -1,14 +1,39 @@
-import baileys from '@whiskeysockets/baileys';
-const {
-    default: makeWASocket,
-    useMultiFileAuthState,
-    DisconnectReason,
-    fetchLatestBaileysVersion,
-    makeCacheableSignalKeyStore,
-    jidDecode,
-    Browsers,
-    makeInMemoryStore
-} = baileys;
+import * as baileysModule from '@whiskeysockets/baileys';
+
+// Robust export extraction helper
+const getBaileysExport = (prop) => {
+    if (baileysModule[prop] !== undefined) return baileysModule[prop];
+    if (baileysModule.default && typeof baileysModule.default === 'object' && baileysModule.default[prop] !== undefined) {
+        return baileysModule.default[prop];
+    }
+    return undefined;
+};
+
+// Debug logging for Baileys imports
+console.log('[SYSTEM] Baileys Import Debug:', {
+    namedExports: Object.keys(baileysModule).filter(k => k !== 'default'),
+    hasDefault: !!baileysModule.default,
+    defaultType: typeof baileysModule.default,
+    defaultKeys: (baileysModule.default && typeof baileysModule.default === 'object') ? Object.keys(baileysModule.default) : 'N/A'
+});
+
+const makeWASocket = (typeof baileysModule.default === 'function') 
+    ? baileysModule.default 
+    : (getBaileysExport('makeWASocket') || baileysModule.default);
+
+const useMultiFileAuthState = getBaileysExport('useMultiFileAuthState');
+const DisconnectReason = getBaileysExport('DisconnectReason');
+const fetchLatestBaileysVersion = getBaileysExport('fetchLatestBaileysVersion');
+const makeCacheableSignalKeyStore = getBaileysExport('makeCacheableSignalKeyStore');
+const jidDecode = getBaileysExport('jidDecode');
+const Browsers = getBaileysExport('Browsers');
+const makeInMemoryStore = getBaileysExport('makeInMemoryStore');
+
+console.log('[SYSTEM] Resolved Baileys functions:', {
+    makeWASocket: typeof makeWASocket,
+    makeInMemoryStore: typeof makeInMemoryStore,
+    useMultiFileAuthState: typeof useMultiFileAuthState
+});
 
 export { 
     makeWASocket, 

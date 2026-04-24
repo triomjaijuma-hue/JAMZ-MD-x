@@ -1,5 +1,5 @@
-import baileys from '@whiskeysockets/baileys';
-const { downloadMediaMessage } = baileys;
+import * as baileysModule from '@whiskeysockets/baileys';
+const downloadMediaMessage = baileysModule.downloadMediaMessage || (baileysModule.default && baileysModule.default.downloadMediaMessage);
 import axios from 'axios';
 
 export default {
