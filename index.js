@@ -15,7 +15,9 @@ import { startServer } from './lib/server.js';
 import db from './lib/database.js';
 import config from './lib/config.js';
 import { loadPlugins } from './lib/loader.js';
-import { handler } from './lib/handler.js';
+import { handler, callHandler, groupParticipantsHandler } from './lib/handler.js';
+import { sethandler } from './lib/socket.js';
+import { smsg } from './lib/serialize.js';
 
 const logger = pino({ level: 'silent' });
 const store = makeInMemoryStore({ logger });
@@ -43,21 +45,23 @@ setInterval(() => {
 
 export let currentSock = null;
 let currentQR = null;
+let reconnectAttempts = 0;
 
-// Memory monitoring
+// Active Memory Management for Railway
 setInterval(() => {
-    const used = process.memoryUsage();
-    if (used.rss > 450 * 1024 * 1024) { // 450MB warning for Railway (usually 512MB limit)
-        console.warn(`[SYSTEM] High Memory Usage: ${Math.round(used.rss / 1024 / 1024)}MB`);
+    const used = process.memoryUsage().rss / 1024 / 1024;
+    if (used > config.memoryLimit) {
+        console.warn(`[SYSTEM] Memory Limit Exceeded (${Math.round(used)}MB > ${config.memoryLimit}MB). Restarting...`);
+        process.exit(1);
     }
-}, 60000);
+}, 30000);
 
 async function startBot() {
     console.log('[SYSTEM] Starting JAMZ-MD...');
     const { state, saveCreds } = await useMultiFileAuthState(config.sessionPath);
     const { version } = await fetchLatestBaileysVersion();
 
-    const sock = makeWASocket({
+    let sock = makeWASocket({
         version,
         logger,
         auth: {
@@ -67,12 +71,15 @@ async function startBot() {
         printQRInTerminal: false,
         browser: Browsers.ubuntu('Chrome'),
         syncFullHistory: false,
-        markOnlineOnConnect: true,
+        markOnlineOnConnect: config.alwaysOnline,
         connectTimeoutMs: 60000,
         defaultContextInfo: {
             deviceListMetadata: {},
         },
     });
+
+    // Augment Socket
+    sock = sethandler(sock);
 
     currentSock = sock;
     store.bind(sock.ev);
@@ -98,18 +105,25 @@ async function startBot() {
         if (connection === 'close') {
             currentQR = null;
             const statusCode = lastDisconnect?.error?.output?.statusCode;
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut && reconnectAttempts < config.maxReconnectAttempts;
+            
             console.log(`[BOT] Connection closed (Reason: ${statusCode}). Reconnecting: ${shouldReconnect}`);
             
             if (shouldReconnect) {
-                // Exponential backoff or simple delay
-                setTimeout(() => startBot(), 5000);
+                reconnectAttempts++;
+                const delay = Math.min(reconnectAttempts * 5000, 30000);
+                setTimeout(() => startBot(), delay);
             } else {
+                if (reconnectAttempts >= config.maxReconnectAttempts) {
+                    console.error('[BOT] Max reconnection attempts reached. Exiting...');
+                    process.exit(1);
+                }
                 console.log('[BOT] Logged out. Please delete the session folder and restart.');
                 process.exit(0);
             }
         } else if (connection === 'open') {
             currentQR = null;
+            reconnectAttempts = 0;
             console.log('[BOT] JAMZ-MD is now Online!');
         }
     });
@@ -117,8 +131,29 @@ async function startBot() {
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
         for (const m of messages) {
-            await handler(sock, m, store);
+            if (!m.message) return;
+            const msg = smsg(sock, m, store);
+            
+            if (config.autoRead) await sock.readMessages([msg.key]);
+            if (config.autoTyping) await sock.sendPresenceUpdate('composing', msg.chat);
+            
+            await handler(sock, msg, store);
         }
+    });
+
+    sock.ev.on('contacts.update', (update) => {
+        for (let contact of update) {
+            let id = sock.decodeJid(contact.id);
+            if (store && store.contacts) store.contacts[id] = { id, name: contact.notify };
+        }
+    });
+
+    sock.ev.on('call', async (call) => {
+        await callHandler(sock, call);
+    });
+
+    sock.ev.on('group-participants.update', async (update) => {
+        await groupParticipantsHandler(sock, update);
     });
 
     return sock;
@@ -127,7 +162,6 @@ async function startBot() {
 // Global Exception Handling
 process.on('uncaughtException', (err) => {
     console.error('[FATAL] Uncaught Exception:', err);
-    // On Railway, we might want to stay alive if possible, but some errors are fatal
 });
 
 process.on('unhandledRejection', (reason, promise) => {
