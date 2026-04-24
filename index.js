@@ -14,6 +14,7 @@ import path from 'path';
 import 'dotenv/config';
 import { Boom } from '@hapi/boom';
 import chalk from 'chalk';
+import NodeCache from 'node-cache';
 import { startServer } from './lib/server.js';
 import db from './lib/database.js';
 import config from './lib/config.js';
@@ -29,79 +30,105 @@ const store = makeInMemoryStore({ logger });
 if (fs.existsSync(config.storePath)) {
     try {
         store.readFromFile(config.storePath);
-        console.log(chalk.green('[SYSTEM] Store loaded.'));
+        console.log(chalk.green('[SYSTEM] Store loaded successfully.'));
     } catch (e) {
-        // console.error(chalk.red('[SYSTEM] Failed to load store:'), e);
+        console.error(chalk.red('[SYSTEM] Failed to load store:'), e);
     }
 }
 
-// Periodic store save (Optimized for Railway)
+// Periodic store save (Optimized for Railway/Persistent Storage)
 setInterval(() => {
     try {
         const dir = path.dirname(config.storePath);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         store.writeToFile(config.storePath);
-    } catch (e) {
-        // console.error(chalk.red('[SYSTEM] Failed to save store:'), e);
-    }
-}, 1000 * 60 * 5); // Save every 5 minutes
+    } catch (e) {}
+}, 1000 * 60 * 2); // Save every 2 minutes
 
-// Memory Management
+// Memory Monitoring (MEGA-MD Style)
 setInterval(() => {
-    const memoryUsage = process.memoryUsage().rss / 1024 / 1024;
-    if (memoryUsage > config.memoryLimit) { // Graceful exit at limit
-        console.log(chalk.red(`[SYSTEM] Memory limit reached: ${memoryUsage.toFixed(2)}MB / ${config.memoryLimit}MB. Graceful exit...`));
-        try {
-            const dir = path.dirname(config.storePath);
-            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-            store.writeToFile(config.storePath);
-        } catch (e) {}
+    const usage = process.memoryUsage();
+    const rss = usage.rss / 1024 / 1024;
+    const heapUsed = usage.heapUsed / 1024 / 1024;
+    
+    if (rss > config.memoryLimit) {
+        console.log(chalk.red(`[CRITICAL] Memory limit exceeded: ${rss.toFixed(2)}MB. Restarting...`));
+        try { store.writeToFile(config.storePath); } catch (e) {}
         process.exit(1);
     }
-}, 1000 * 30); // Check every 30 seconds
+}, 1000 * 60);
+
+const msgRetryCounterCache = new NodeCache();
 
 export let currentSock = null;
 let currentQR = null;
 let retryCount = 0;
 
 async function startBot() {
-    console.log(chalk.cyan('[SYSTEM] Starting JAMZ-MD...'));
+    console.log(chalk.cyan(`
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                              ┃
+┃   ██████╗ ███████╗ ██████╗  ██████╗ ███╗   ██╗██╗   ██╗██████╗ ┃
+┃   ██╔══██╗██╔════╝██╔════╝ ██╔═══██╗████╗  ██║██║   ██║██╔══██╗┃
+┃   ██████╔╝█████╗  ██║  ███╗██║   ██║██╔██╗ ██║██║   ██║██████╔╝┃
+┃   ██╔══██╗██╔══╝  ██║   ██║██║   ██║██║╚██╗██║██║   ██║██╔══██╗┃
+┃   ██║  ██║███████╗╚██████╔╝╚██████╔╝██║ ╚████║╚██████╔╝██████╔╝┃
+┃   ╚═╝  ╚═╝╚══════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═════╝ ┃
+┃                                                              ┃
+┃                MEGA-MD RECONSTRUCTION v1.0.0                 ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+`));
+
     const { state, saveCreds } = await useMultiFileAuthState(config.sessionPath);
-    const { version } = await fetchLatestBaileysVersion();
+    const { version, isLatest } = await fetchLatestBaileysVersion();
+    
+    console.log(chalk.blue(`[SYSTEM] Using Baileys version: ${version.join('.')} (Latest: ${isLatest})`));
 
     let sock = makeWASocket({
         version,
         logger,
+        printQRInTerminal: true,
         auth: {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
-        printQRInTerminal: true,
-        browser: Browsers.macOS('Desktop'),
+        browser: Browsers.ubuntu('Chrome'),
+        msgRetryCounterCache,
+        generateHighQualityLinkPreview: true,
         syncFullHistory: false,
         markOnlineOnConnect: config.alwaysOnline,
         connectTimeoutMs: 60000,
         defaultContextInfo: {
             deviceListMetadata: {},
         },
+        getMessage: async (key) => {
+            if (store) {
+                const msg = await store.loadMessage(key.remoteJid, key.id);
+                return msg?.message || undefined;
+            }
+            return {
+                conversation: "JAMZ-MD - Reliable Messaging"
+            };
+        }
     });
 
     currentSock = sock;
     store.bind(sock.ev);
-
-    // Socket Decoration
     decorateSocket(sock, store);
 
-    // Pairing code logic
+    // Pairing Code Request
     if (!sock.authState.creds.registered) {
-        setTimeout(async () => {
-            try {
-                let code = await sock.requestPairingCode(config.pairingNumber);
-                console.log(chalk.black(chalk.bgYellow(`[BOT] Pairing Code: ${code}`)));
-            } catch (e) {
-                // console.error(chalk.red('[BOT] Failed to request pairing code:'), e);
-            }
-        }, 5000);
+        if (config.pairingNumber) {
+            console.log(chalk.yellow(`[SYSTEM] Requesting pairing code for ${config.pairingNumber}...`));
+            setTimeout(async () => {
+                try {
+                    let code = await sock.requestPairingCode(config.pairingNumber.replace(/[^0-9]/g, ''));
+                    console.log(chalk.white.bgGreen.bold(`\n PAIRING CODE: ${code} \n`));
+                } catch (e) {
+                    console.error(chalk.red('[SYSTEM] Pairing Code Error:'), e);
+                }
+            }, 3000);
+        }
     }
 
     sock.ev.on('creds.update', saveCreds);
@@ -113,21 +140,24 @@ async function startBot() {
         if (connection === 'close') {
             currentQR = null;
             let reason = new Boom(lastDisconnect?.error)?.output.statusCode;
-            console.log(chalk.yellow(`[BOT] Connection closed. Reason: ${reason}`));
-            
+            console.log(chalk.yellow(`[SYSTEM] Connection closed. Reason: ${reason}`));
+
             if (reason === DisconnectReason.loggedOut) {
-                console.log(chalk.red('[BOT] Logged out. Delete session and restart.'));
+                console.log(chalk.red('[SYSTEM] Logged out. Session destroyed. Please delete session folder and restart.'));
                 process.exit(0);
             } else {
                 retryCount++;
-                const delay = Math.min(retryCount * 5000, 30000); // Exponential backoff
-                console.log(chalk.cyan(`[BOT] Reconnecting in ${delay/1000}s... (Attempt ${retryCount})`));
+                const delay = Math.min(retryCount * 5000, 30000);
+                console.log(chalk.cyan(`[SYSTEM] Reconnecting in ${delay/1000}s... (Attempt ${retryCount})`));
                 setTimeout(startBot, delay);
             }
         } else if (connection === 'open') {
             currentQR = null;
             retryCount = 0;
-            console.log(chalk.green('[BOT] JAMZ-MD is now Online!'));
+            console.log(chalk.green.bold('[SYSTEM] MEGA-MD Connection established!'));
+            
+            // Auto-Join Support Group if needed
+            // await sock.groupAcceptInvite('...').catch(() => {});
         }
     });
 
@@ -162,41 +192,38 @@ async function startBot() {
     return sock;
 }
 
-// Global Exception Handling
+// Robust Process Handlers
 process.on('uncaughtException', (err) => {
-    console.error(chalk.red('[FATAL] Uncaught Exception:'), err);
+    console.error(chalk.red('[FATAL ERROR]'), err);
+    // Don't exit on all errors, but log them
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-    console.error(chalk.red('[FATAL] Unhandled Rejection at:'), promise, 'reason:', reason);
+    console.error(chalk.red('[UNHANDLED REJECTION] at:'), promise, 'reason:', reason);
 });
 
-// Handle termination
-const gracefulShutdown = () => {
-    console.log(chalk.cyan('[SYSTEM] Shutting down gracefully...'));
+const shutdown = async () => {
+    console.log(chalk.yellow('\n[SYSTEM] Shutting down gracefully...'));
     try {
-        const dir = path.dirname(config.storePath);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        store.writeToFile(config.storePath);
-        console.log(chalk.green('[SYSTEM] Store saved.'));
+        if (store) store.writeToFile(config.storePath);
+        process.exit(0);
     } catch (e) {
-        // console.error(chalk.red('[SYSTEM] Failed to save store during shutdown:'), e);
+        process.exit(1);
     }
-    process.exit(0);
 };
 
-process.on('SIGINT', gracefulShutdown);
-process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 
-async function main() {
+async function init() {
     try {
         await loadPlugins();
         await startBot();
         startServer(() => ({ sock: currentSock, qr: currentQR }));
     } catch (e) {
-        console.error(chalk.red('[SYSTEM] Critical startup error:'), e);
+        console.error(chalk.red('[SYSTEM] Initialization failed:'), e);
         process.exit(1);
     }
 }
 
-main();
+init();
