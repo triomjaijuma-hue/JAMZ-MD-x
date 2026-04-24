@@ -5,7 +5,8 @@ import {
     fetchLatestBaileysVersion,
     makeCacheableSignalKeyStore,
     jidDecode,
-    Browsers
+    Browsers,
+    makeInMemoryStore
 } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import fs from 'fs';
@@ -13,12 +14,23 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import 'dotenv/config';
 import { startServer } from './lib/server.js';
+import db from './lib/database.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const logger = pino({ level: 'silent' });
 const plugins = new Map();
+
+const store = makeInMemoryStore({ logger });
+store.readFromFile('./database/store.json');
+setInterval(() => {
+    try {
+        store.writeToFile('./database/store.json');
+    } catch (e) {
+        console.error('Error writing store to file:', e);
+    }
+}, 10000);
 
 let currentSock = null;
 let currentQR = null;
@@ -67,6 +79,7 @@ async function startBot() {
     });
 
     currentSock = sock;
+    store.bind(sock.ev);
 
     if (!sock.authState.creds.registered) {
         const phoneNumber = (process.env.BOT_NUMBER || '256706106326').replace(/\D/g, '');
@@ -98,6 +111,32 @@ async function startBot() {
         const msg = messages[0];
         if (!msg.message) return;
 
+        const from = msg.key.remoteJid;
+
+        // Anti-Delete logic
+        if (msg.message.protocolMessage && msg.message.protocolMessage.type === 3) {
+            const key = msg.message.protocolMessage.key;
+            
+            const database = db.get();
+            const isAntiDeleteEnabled = database.groups[from]?.antidelete || database.settings.antidelete;
+            
+            if (isAntiDeleteEnabled) {
+                try {
+                    const deletedMsg = await store.loadMessage(from, key.id);
+                    if (deletedMsg && deletedMsg.message) {
+                        const participant = deletedMsg.key.participant || deletedMsg.key.remoteJid;
+                        await sock.sendMessage(from, { 
+                            text: `🛡️ *JAMZ-MD ANTI-DELETE*\n\n*From:* @${participant.split('@')[0]}\n*Time:* ${new Date().toLocaleString()}`,
+                            mentions: [participant]
+                        });
+                        await sock.sendMessage(from, { forward: deletedMsg }, { quoted: deletedMsg });
+                    }
+                } catch (e) {
+                    console.error('Anti-Delete Error:', e);
+                }
+            }
+        }
+
         // Sender & Owner Detection
         const botId = sock.user?.id ? (jidDecode(sock.user.id)?.user + '@s.whatsapp.net') : null;
         const ownerNumber = (process.env.BOT_OWNER_WA_ID || '256706106326').replace(/\D/g, '');
@@ -123,7 +162,6 @@ async function startBot() {
         };
         msg.message = unwrap(msg.message);
 
-        const from = msg.key.remoteJid;
         let body = (
             msg.message?.conversation ||
             msg.message?.extendedTextMessage?.text ||
@@ -148,7 +186,14 @@ async function startBot() {
         const prefix = prefixes.find(p => body.startsWith(p));
         
         if (!prefix) {
-            console.log(`[MSG] No prefix found for: ${body.slice(0, 20)}...`);
+            const database = db.get();
+            const isAIOn = database.groups[from]?.aion || database.settings.aion;
+            if (isAIOn && body && !msg.key.fromMe) {
+                const gptPlugin = plugins.get('gpt');
+                if (gptPlugin) {
+                    await gptPlugin.execute(sock, msg, { args: body.split(/ +/), body, text: body, prefix: '', commandName: 'gpt', isOwner, plugins });
+                }
+            }
             return;
         }
 
