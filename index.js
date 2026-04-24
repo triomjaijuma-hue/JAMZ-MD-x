@@ -16,6 +16,15 @@ import 'dotenv/config';
 import { startServer } from './lib/server.js';
 import db from './lib/database.js';
 
+// Global Error Handling
+process.on('uncaughtException', (err) => {
+    console.error('[SYSTEM] Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[SYSTEM] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -23,12 +32,27 @@ const logger = pino({ level: 'silent' });
 const plugins = new Map();
 
 const store = makeInMemoryStore({ logger });
-store.readFromFile('./database/store.json');
+const storePath = './database/store.json';
+
+try {
+    if (fs.existsSync(storePath)) {
+        store.readFromFile(storePath);
+        console.log('[SYSTEM] Store loaded from file.');
+    } else {
+        console.log('[SYSTEM] No existing store found, starting fresh.');
+    }
+} catch (e) {
+    console.error('[SYSTEM] Error reading store from file:', e);
+}
+
 setInterval(() => {
     try {
-        store.writeToFile('./database/store.json');
+        if (!fs.existsSync(path.dirname(storePath))) {
+            fs.mkdirSync(path.dirname(storePath), { recursive: true });
+        }
+        store.writeToFile(storePath);
     } catch (e) {
-        console.error('Error writing store to file:', e);
+        console.error('[SYSTEM] Error writing store to file:', e);
     }
 }, 10000);
 
@@ -37,6 +61,7 @@ let currentQR = null;
 
 // Load Plugins
 async function loadPlugins() {
+    console.log('[BOT] Loading plugins...');
     const pluginFolder = path.join(__dirname, 'bot', 'plugins');
     if (!fs.existsSync(pluginFolder)) {
         fs.mkdirSync(pluginFolder, { recursive: true });
@@ -48,13 +73,13 @@ async function loadPlugins() {
             const plugin = await import(`./bot/plugins/${file}`);
             if (plugin.default && plugin.default.name) {
                 plugins.set(plugin.default.name, plugin.default);
-                console.log(`Loaded plugin: ${plugin.default.name}`);
+                console.log(`[BOT] Loaded plugin: ${plugin.default.name}`);
             }
         } catch (e) {
-            console.error(`Error loading plugin ${file}:`, e);
+            console.error(`[BOT] Error loading plugin ${file}:`, e);
         }
     }
-    console.log(`Successfully loaded ${plugins.size} plugins.`);
+    console.log(`[BOT] Successfully loaded ${plugins.size} plugins.`);
 }
 
 async function startBot() {
@@ -84,8 +109,12 @@ async function startBot() {
     if (!sock.authState.creds.registered) {
         const phoneNumber = (process.env.BOT_NUMBER || '256706106326').replace(/\D/g, '');
         setTimeout(async () => {
-            let code = await sock.requestPairingCode(phoneNumber);
-            console.log(`Pair Code: ${code}`);
+            try {
+                let code = await sock.requestPairingCode(phoneNumber);
+                console.log(`[BOT] Pair Code: ${code}`);
+            } catch (e) {
+                console.error('[BOT] Error requesting pairing code:', e);
+            }
         }, 3000);
     }
 
@@ -97,12 +126,13 @@ async function startBot() {
 
         if (connection === 'close') {
             currentQR = null;
-            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Connection closed. Reconnecting...', shouldReconnect);
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            console.log(`[BOT] Connection closed (Reason: ${statusCode}). Reconnecting: ${shouldReconnect}`);
             if (shouldReconnect) startBot();
         } else if (connection === 'open') {
             currentQR = null;
-            console.log('JAMZ-MD Connected!');
+            console.log('[BOT] JAMZ-MD Connected!');
         }
     });
 
@@ -220,7 +250,15 @@ async function startBot() {
     return sock;
 }
 
-loadPlugins().then(() => {
-    startBot();
-    startServer(() => ({ sock: currentSock, qr: currentQR }));
-});
+async function main() {
+    try {
+        await loadPlugins();
+        await startBot();
+        startServer(() => ({ sock: currentSock, qr: currentQR }));
+    } catch (e) {
+        console.error('[SYSTEM] Critical error during startup:', e);
+        process.exit(1);
+    }
+}
+
+main();
