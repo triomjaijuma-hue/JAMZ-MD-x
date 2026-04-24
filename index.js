@@ -1,25 +1,18 @@
-import * as baileysModule from '@whiskeysockets/baileys';
+import * as baileysNS from '@whiskeysockets/baileys';
 
 // Robust export extraction helper
 const getBaileysExport = (prop) => {
-    if (baileysModule[prop] !== undefined) return baileysModule[prop];
-    if (baileysModule.default && typeof baileysModule.default === 'object' && baileysModule.default[prop] !== undefined) {
-        return baileysModule.default[prop];
+    if (baileysNS[prop] !== undefined) return baileysNS[prop];
+    if (baileysNS.default && typeof baileysNS.default === 'object' && baileysNS.default[prop] !== undefined) {
+        return baileysNS.default[prop];
     }
     return undefined;
 };
 
-// Debug logging for Baileys imports
-console.log('[SYSTEM] Baileys Import Debug:', {
-    namedExports: Object.keys(baileysModule).filter(k => k !== 'default'),
-    hasDefault: !!baileysModule.default,
-    defaultType: typeof baileysModule.default,
-    defaultKeys: (baileysModule.default && typeof baileysModule.default === 'object') ? Object.keys(baileysModule.default) : 'N/A'
-});
-
-const makeWASocket = (typeof baileysModule.default === 'function') 
-    ? baileysModule.default 
-    : (getBaileysExport('makeWASocket') || baileysModule.default);
+// Resolve makeWASocket specifically as it can be the default export itself
+const makeWASocket = (typeof baileysNS.default === 'function') 
+    ? baileysNS.default 
+    : (getBaileysExport('makeWASocket') || baileysNS.default);
 
 const useMultiFileAuthState = getBaileysExport('useMultiFileAuthState');
 const DisconnectReason = getBaileysExport('DisconnectReason');
@@ -28,12 +21,6 @@ const makeCacheableSignalKeyStore = getBaileysExport('makeCacheableSignalKeyStor
 const jidDecode = getBaileysExport('jidDecode');
 const Browsers = getBaileysExport('Browsers');
 const makeInMemoryStore = getBaileysExport('makeInMemoryStore');
-
-console.log('[SYSTEM] Resolved Baileys functions:', {
-    makeWASocket: typeof makeWASocket,
-    makeInMemoryStore: typeof makeInMemoryStore,
-    useMultiFileAuthState: typeof useMultiFileAuthState
-});
 
 export { 
     makeWASocket, 
