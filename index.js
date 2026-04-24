@@ -5,19 +5,26 @@ import {
     fetchLatestBaileysVersion, 
     makeCacheableSignalKeyStore, 
     Browsers, 
-    makeInMemoryStore 
+    makeInMemoryStore,
+    proto,
+    jidDecode,
+    getContentType,
+    downloadMediaMessage,
+    generateForwardMessageContent,
+    generateWAMessageFromContent
 } from './lib/baileys.js';
 import pino from 'pino';
 import fs from 'fs';
 import path from 'path';
 import 'dotenv/config';
+import { Boom } from '@hapi/boom';
+import chalk from 'chalk';
 import { startServer } from './lib/server.js';
 import db from './lib/database.js';
 import config from './lib/config.js';
 import { loadPlugins } from './lib/loader.js';
 import { handler, callHandler, groupParticipantsHandler } from './lib/handler.js';
-import { sethandler } from './lib/socket.js';
-import { smsg } from './lib/serialize.js';
+import { smsg, decodeJid } from './lib/myfunc.js';
 
 const logger = pino({ level: 'silent' });
 const store = makeInMemoryStore({ logger });
@@ -26,38 +33,28 @@ const store = makeInMemoryStore({ logger });
 if (fs.existsSync(config.storePath)) {
     try {
         store.readFromFile(config.storePath);
-        console.log('[SYSTEM] Store loaded.');
+        console.log(chalk.green('[SYSTEM] Store loaded.'));
     } catch (e) {
-        console.error('[SYSTEM] Failed to load store:', e);
+        console.error(chalk.red('[SYSTEM] Failed to load store:'), e);
     }
 }
 
-// Periodic store save
+// Periodic store save (Optimized for Railway)
 setInterval(() => {
     try {
         const dir = path.dirname(config.storePath);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         store.writeToFile(config.storePath);
     } catch (e) {
-        console.error('[SYSTEM] Failed to save store:', e);
+        // console.error(chalk.red('[SYSTEM] Failed to save store:'), e);
     }
-}, 30000);
+}, 1000 * 60 * 5); // Save every 5 minutes
 
 export let currentSock = null;
 let currentQR = null;
-let reconnectAttempts = 0;
-
-// Active Memory Management for Railway
-setInterval(() => {
-    const used = process.memoryUsage().rss / 1024 / 1024;
-    if (used > config.memoryLimit) {
-        console.warn(`[SYSTEM] Memory Limit Exceeded (${Math.round(used)}MB > ${config.memoryLimit}MB). Restarting...`);
-        process.exit(1);
-    }
-}, 30000);
 
 async function startBot() {
-    console.log('[SYSTEM] Starting JAMZ-MD...');
+    console.log(chalk.cyan('[SYSTEM] Starting JAMZ-MD...'));
     const { state, saveCreds } = await useMultiFileAuthState(config.sessionPath);
     const { version } = await fetchLatestBaileysVersion();
 
@@ -78,20 +75,102 @@ async function startBot() {
         },
     });
 
-    // Augment Socket
-    sock = sethandler(sock);
-
     currentSock = sock;
     store.bind(sock.ev);
+
+    // Socket Decoration
+    sock.decodeJid = (jid) => {
+        if (!jid) return jid;
+        if (/:\d+@/gi.test(jid)) {
+            let decode = jidDecode(jid) || {};
+            return decode.user && decode.server && decode.user + '@' + decode.server || jid;
+        }
+        return jid;
+    };
+
+    sock.ev.on('contacts.update', update => {
+        for (let contact of update) {
+            let id = sock.decodeJid(contact.id);
+            if (store && store.contacts) store.contacts[id] = { id, name: contact.notify };
+        }
+    });
+
+    sock.getName = (jid, withoutContact = false) => {
+        let id = sock.decodeJid(jid);
+        withoutContact = sock.withoutContact || withoutContact;
+        let v;
+        if (id.endsWith("@g.us")) return new Promise(async (resolve) => {
+            v = store.contacts[id] || {};
+            if (!(v.name || v.subject)) v = await sock.groupMetadata(id) || {};
+            resolve(v.name || v.subject || id.replace(/@g.us/, ''));
+        });
+        else v = id === '0@s.whatsapp.net' ? {
+            id,
+            name: 'WhatsApp'
+        } : id === sock.decodeJid(sock.user.id) ?
+            sock.user :
+            (store.contacts[id] || {});
+        return (withoutContact ? '' : v.name) || v.subject || v.verifiedName || id.replace(/@s.whatsapp.net/, '');
+    };
+
+    sock.sendContact = async (jid, kon, quoted = '', opts = {}) => {
+        let list = [];
+        for (let i of kon) {
+            list.push({
+                displayName: await sock.getName(i + '@s.whatsapp.net'),
+                vcard: `BEGIN:VCARD\nVERSION:3.0\nN:${await sock.getName(i + '@s.whatsapp.net')}\nFN:${await sock.getName(i + '@s.whatsapp.net')}\nitem1.TEL;waid=${i}:${i}\nitem1.X-ABLabel:Ponsel\nEND:VCARD`
+            });
+        }
+        return sock.sendMessage(jid, { contacts: { displayName: `${list.length} Contact`, contacts: list }, ...opts }, { quoted });
+    };
+
+    sock.sendText = (jid, text, quoted = '', options) => sock.sendMessage(jid, { text: text, ...options }, { quoted });
+
+    sock.downloadMediaMessage = async (message) => {
+        let mime = (message.msg || message).mimetype || '';
+        let messageType = message.mtype ? message.mtype.replace(/Message/gi, '') : mime.split('/')[0];
+        const stream = await downloadMediaMessage(message, 'buffer', {}, {
+            logger,
+            reuploadRequest: sock.updateMediaMessage
+        });
+        return stream;
+    };
+
+    sock.copyNForward = async (jid, message, forceForward = false, options = {}) => {
+        let vtype;
+        if (options.readViewOnce) {
+            message.message = message.message && message.message.viewOnceMessage && message.message.viewOnceMessage.message ? message.message.viewOnceMessage.message : (message.message || undefined);
+            vtype = getContentType(message.message);
+            let m = message.message[vtype];
+            delete m.viewOnce;
+            message.message = { [vtype]: m };
+        }
+
+        let mtype = getContentType(message.message);
+        let content = generateForwardMessageContent(message, forceForward);
+        let ctype = getContentType(content);
+        let context = {};
+        if (mtype != "conversation") context = message.message[mtype].contextInfo;
+        content[ctype].contextInfo = {
+            ...context,
+            ...content[ctype].contextInfo
+        };
+        const waMessage = generateWAMessageFromContent(jid, content, options ? {
+            ...options,
+            ...(Object.keys(context).length > 0 ? { contextInfo: { ...context, ...options.contextInfo } } : {})
+        } : {});
+        await sock.relayMessage(jid, waMessage.message, { messageId: waMessage.key.id });
+        return waMessage;
+    };
 
     // Pairing code logic
     if (!sock.authState.creds.registered) {
         setTimeout(async () => {
             try {
                 let code = await sock.requestPairingCode(config.pairingNumber);
-                console.log(`[BOT] Pairing Code: ${code}`);
+                console.log(chalk.yellow(`[BOT] Pairing Code: ${code}`));
             } catch (e) {
-                console.error('[BOT] Failed to request pairing code:', e);
+                console.error(chalk.red('[BOT] Failed to request pairing code:'), e);
             }
         }, 5000);
     }
@@ -104,27 +183,17 @@ async function startBot() {
 
         if (connection === 'close') {
             currentQR = null;
-            const statusCode = lastDisconnect?.error?.output?.statusCode;
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut && reconnectAttempts < config.maxReconnectAttempts;
-            
-            console.log(`[BOT] Connection closed (Reason: ${statusCode}). Reconnecting: ${shouldReconnect}`);
-            
-            if (shouldReconnect) {
-                reconnectAttempts++;
-                const delay = Math.min(reconnectAttempts * 5000, 30000);
-                setTimeout(() => startBot(), delay);
-            } else {
-                if (reconnectAttempts >= config.maxReconnectAttempts) {
-                    console.error('[BOT] Max reconnection attempts reached. Exiting...');
-                    process.exit(1);
-                }
-                console.log('[BOT] Logged out. Please delete the session folder and restart.');
+            let reason = new Boom(lastDisconnect?.error)?.output.statusCode;
+            if (reason === DisconnectReason.loggedOut) {
+                console.log(chalk.red('[BOT] Connection closed. Logged out.'));
                 process.exit(0);
+            } else {
+                console.log(chalk.yellow(`[BOT] Connection closed. Reason: ${reason}. Reconnecting...`));
+                startBot();
             }
         } else if (connection === 'open') {
             currentQR = null;
-            reconnectAttempts = 0;
-            console.log('[BOT] JAMZ-MD is now Online!');
+            console.log(chalk.green('[BOT] JAMZ-MD is now Online!'));
         }
     });
 
@@ -141,13 +210,6 @@ async function startBot() {
         }
     });
 
-    sock.ev.on('contacts.update', (update) => {
-        for (let contact of update) {
-            let id = sock.decodeJid(contact.id);
-            if (store && store.contacts) store.contacts[id] = { id, name: contact.notify };
-        }
-    });
-
     sock.ev.on('call', async (call) => {
         await callHandler(sock, call);
     });
@@ -161,23 +223,23 @@ async function startBot() {
 
 // Global Exception Handling
 process.on('uncaughtException', (err) => {
-    console.error('[FATAL] Uncaught Exception:', err);
+    console.error(chalk.red('[FATAL] Uncaught Exception:'), err);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-    console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
+    console.error(chalk.red('[FATAL] Unhandled Rejection at:'), promise, 'reason:', reason);
 });
 
 // Handle termination
 const gracefulShutdown = () => {
-    console.log('[SYSTEM] Shutting down gracefully...');
+    console.log(chalk.cyan('[SYSTEM] Shutting down gracefully...'));
     try {
         const dir = path.dirname(config.storePath);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         store.writeToFile(config.storePath);
-        console.log('[SYSTEM] Store saved.');
+        console.log(chalk.green('[SYSTEM] Store saved.'));
     } catch (e) {
-        console.error('[SYSTEM] Failed to save store during shutdown:', e);
+        console.error(chalk.red('[SYSTEM] Failed to save store during shutdown:'), e);
     }
     process.exit(0);
 };
@@ -191,7 +253,7 @@ async function main() {
         await startBot();
         startServer(() => ({ sock: currentSock, qr: currentQR }));
     } catch (e) {
-        console.error('[SYSTEM] Critical startup error:', e);
+        console.error(chalk.red('[SYSTEM] Critical startup error:'), e);
         process.exit(1);
     }
 }
