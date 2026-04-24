@@ -4,7 +4,8 @@ import {
     DisconnectReason,
     fetchLatestBaileysVersion,
     makeCacheableSignalKeyStore,
-    jidDecode
+    jidDecode,
+    Browsers
 } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import fs from 'fs';
@@ -55,13 +56,19 @@ async function startBot() {
             keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
         printQRInTerminal: false,
-        browser: ['JAMZ-MD', 'Chrome', '1.0.0']
+        browser: Browsers.ubuntu('Chrome'),
+        syncFullHistory: false,
+        markOnlineOnConnect: true,
+        connectTimeoutMs: 60000,
+        defaultContextInfo: {
+            deviceListMetadata: {},
+        },
     });
 
     currentSock = sock;
 
     if (!sock.authState.creds.registered) {
-        const phoneNumber = process.env.BOT_NUMBER || '256706106326';
+        const phoneNumber = (process.env.BOT_NUMBER || '256706106326').replace(/\D/g, '');
         setTimeout(async () => {
             let code = await sock.requestPairingCode(phoneNumber);
             console.log(`Pair Code: ${code}`);
