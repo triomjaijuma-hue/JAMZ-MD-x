@@ -5,13 +5,7 @@ import {
     fetchLatestBaileysVersion, 
     makeCacheableSignalKeyStore, 
     Browsers, 
-    makeInMemoryStore,
-    proto,
-    jidDecode,
-    getContentType,
-    downloadMediaMessage,
-    generateForwardMessageContent,
-    generateWAMessageFromContent
+    makeInMemoryStore
 } from './lib/baileys.js';
 import pino from 'pino';
 import fs from 'fs';
@@ -24,7 +18,8 @@ import db from './lib/database.js';
 import config from './lib/config.js';
 import { loadPlugins } from './lib/loader.js';
 import { handler, callHandler, groupParticipantsHandler } from './lib/handler.js';
-import { smsg, decodeJid } from './lib/myfunc.js';
+import { smsg } from './lib/serialize.js';
+import { socket as decorateSocket } from './lib/socket.js';
 
 const logger = pino({ level: 'silent' });
 const store = makeInMemoryStore({ logger });
@@ -49,6 +44,20 @@ setInterval(() => {
         // console.error(chalk.red('[SYSTEM] Failed to save store:'), e);
     }
 }, 1000 * 60 * 5); // Save every 5 minutes
+
+// Memory Management
+setInterval(() => {
+    const memoryUsage = process.memoryUsage().rss / 1024 / 1024;
+    if (memoryUsage > config.memoryLimit) {
+        console.log(chalk.red(`[SYSTEM] Memory limit exceeded: ${memoryUsage.toFixed(2)}MB / ${config.memoryLimit}MB. Restarting...`));
+        try {
+            const dir = path.dirname(config.storePath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            store.writeToFile(config.storePath);
+        } catch (e) {}
+        process.exit(1); // Railway will restart the container
+    }
+}, 1000 * 60); // Check every minute
 
 export let currentSock = null;
 let currentQR = null;
@@ -79,89 +88,7 @@ async function startBot() {
     store.bind(sock.ev);
 
     // Socket Decoration
-    sock.decodeJid = (jid) => {
-        if (!jid) return jid;
-        if (/:\d+@/gi.test(jid)) {
-            let decode = jidDecode(jid) || {};
-            return decode.user && decode.server && decode.user + '@' + decode.server || jid;
-        }
-        return jid;
-    };
-
-    sock.ev.on('contacts.update', update => {
-        for (let contact of update) {
-            let id = sock.decodeJid(contact.id);
-            if (store && store.contacts) store.contacts[id] = { id, name: contact.notify };
-        }
-    });
-
-    sock.getName = (jid, withoutContact = false) => {
-        let id = sock.decodeJid(jid);
-        withoutContact = sock.withoutContact || withoutContact;
-        let v;
-        if (id.endsWith("@g.us")) return new Promise(async (resolve) => {
-            v = store.contacts[id] || {};
-            if (!(v.name || v.subject)) v = await sock.groupMetadata(id) || {};
-            resolve(v.name || v.subject || id.replace(/@g.us/, ''));
-        });
-        else v = id === '0@s.whatsapp.net' ? {
-            id,
-            name: 'WhatsApp'
-        } : id === sock.decodeJid(sock.user.id) ?
-            sock.user :
-            (store.contacts[id] || {});
-        return (withoutContact ? '' : v.name) || v.subject || v.verifiedName || id.replace(/@s.whatsapp.net/, '');
-    };
-
-    sock.sendContact = async (jid, kon, quoted = '', opts = {}) => {
-        let list = [];
-        for (let i of kon) {
-            list.push({
-                displayName: await sock.getName(i + '@s.whatsapp.net'),
-                vcard: `BEGIN:VCARD\nVERSION:3.0\nN:${await sock.getName(i + '@s.whatsapp.net')}\nFN:${await sock.getName(i + '@s.whatsapp.net')}\nitem1.TEL;waid=${i}:${i}\nitem1.X-ABLabel:Ponsel\nEND:VCARD`
-            });
-        }
-        return sock.sendMessage(jid, { contacts: { displayName: `${list.length} Contact`, contacts: list }, ...opts }, { quoted });
-    };
-
-    sock.sendText = (jid, text, quoted = '', options) => sock.sendMessage(jid, { text: text, ...options }, { quoted });
-
-    sock.downloadMediaMessage = async (message) => {
-        let mime = (message.msg || message).mimetype || '';
-        let messageType = message.mtype ? message.mtype.replace(/Message/gi, '') : mime.split('/')[0];
-        const stream = await downloadMediaMessage(message, 'buffer', {}, {
-            logger,
-            reuploadRequest: sock.updateMediaMessage
-        });
-        return stream;
-    };
-
-    sock.copyNForward = async (jid, message, forceForward = false, options = {}) => {
-        let vtype;
-        if (options.readViewOnce) {
-            message.message = message.message && message.message.viewOnceMessage && message.message.viewOnceMessage.message ? message.message.viewOnceMessage.message : (message.message || undefined);
-            vtype = getContentType(message.message);
-            let m = message.message[vtype];
-            delete m.viewOnce;
-            message.message = { [vtype]: m };
-        }
-
-        let mtype = getContentType(message.message);
-        let content = generateForwardMessageContent(message, forceForward);
-        let ctype = getContentType(content);
-        let context = {};
-        if (mtype != "conversation") context = message.message[mtype].contextInfo;
-        content[ctype].contextInfo = {
-            ...context,
-            ...content[ctype].contextInfo
-        };
-        const waMessage = generateWAMessageFromContent(jid, content, options ? {
-            ...options,
-            ...(Object.keys(context).length > 0 ? { contextInfo: { ...context, ...options.contextInfo } } : {})
-        } : {});
-        await sock.relayMessage(jid, waMessage.message, { messageId: waMessage.key.id });
-        return waMessage;
-    };
+    decorateSocket(sock, store);
 
     // Pairing code logic
     if (!sock.authState.creds.registered) {
@@ -194,6 +121,13 @@ async function startBot() {
         } else if (connection === 'open') {
             currentQR = null;
             console.log(chalk.green('[BOT] JAMZ-MD is now Online!'));
+        }
+    });
+
+    sock.ev.on('contacts.update', update => {
+        for (let contact of update) {
+            let id = sock.decodeJid(contact.id);
+            if (store && store.contacts) store.contacts[id] = { id, name: contact.notify };
         }
     });
 
