@@ -5,7 +5,8 @@ import {
     fetchLatestBaileysVersion, 
     makeCacheableSignalKeyStore, 
     Browsers, 
-    makeInMemoryStore
+    makeInMemoryStore,
+    jidDecode
 } from './lib/baileys.js';
 import pino from 'pino';
 import fs from 'fs';
@@ -18,7 +19,7 @@ import db from './lib/database.js';
 import config from './lib/config.js';
 import { loadPlugins } from './lib/loader.js';
 import { handler, callHandler, groupParticipantsHandler } from './lib/handler.js';
-import { smsg } from './lib/serialize.js';
+import { smsg, decodeJid } from './lib/myfunc.js';
 import { socket as decorateSocket } from './lib/socket.js';
 
 const logger = pino({ level: 'silent' });
@@ -30,7 +31,7 @@ if (fs.existsSync(config.storePath)) {
         store.readFromFile(config.storePath);
         console.log(chalk.green('[SYSTEM] Store loaded.'));
     } catch (e) {
-        console.error(chalk.red('[SYSTEM] Failed to load store:'), e);
+        // console.error(chalk.red('[SYSTEM] Failed to load store:'), e);
     }
 }
 
@@ -48,19 +49,20 @@ setInterval(() => {
 // Memory Management
 setInterval(() => {
     const memoryUsage = process.memoryUsage().rss / 1024 / 1024;
-    if (memoryUsage > config.memoryLimit) {
-        console.log(chalk.red(`[SYSTEM] Memory limit exceeded: ${memoryUsage.toFixed(2)}MB / ${config.memoryLimit}MB. Restarting...`));
+    if (memoryUsage > config.memoryLimit) { // Graceful exit at limit
+        console.log(chalk.red(`[SYSTEM] Memory limit reached: ${memoryUsage.toFixed(2)}MB / ${config.memoryLimit}MB. Graceful exit...`));
         try {
             const dir = path.dirname(config.storePath);
             if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
             store.writeToFile(config.storePath);
         } catch (e) {}
-        process.exit(1); // Railway will restart the container
+        process.exit(1);
     }
-}, 1000 * 60); // Check every minute
+}, 1000 * 30); // Check every 30 seconds
 
 export let currentSock = null;
 let currentQR = null;
+let retryCount = 0;
 
 async function startBot() {
     console.log(chalk.cyan('[SYSTEM] Starting JAMZ-MD...'));
@@ -74,8 +76,8 @@ async function startBot() {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
-        printQRInTerminal: false,
-        browser: Browsers.ubuntu('Chrome'),
+        printQRInTerminal: true,
+        browser: Browsers.macOS('Desktop'),
         syncFullHistory: false,
         markOnlineOnConnect: config.alwaysOnline,
         connectTimeoutMs: 60000,
@@ -95,9 +97,9 @@ async function startBot() {
         setTimeout(async () => {
             try {
                 let code = await sock.requestPairingCode(config.pairingNumber);
-                console.log(chalk.yellow(`[BOT] Pairing Code: ${code}`));
+                console.log(chalk.black(chalk.bgYellow(`[BOT] Pairing Code: ${code}`)));
             } catch (e) {
-                console.error(chalk.red('[BOT] Failed to request pairing code:'), e);
+                // console.error(chalk.red('[BOT] Failed to request pairing code:'), e);
             }
         }, 5000);
     }
@@ -111,22 +113,27 @@ async function startBot() {
         if (connection === 'close') {
             currentQR = null;
             let reason = new Boom(lastDisconnect?.error)?.output.statusCode;
+            console.log(chalk.yellow(`[BOT] Connection closed. Reason: ${reason}`));
+            
             if (reason === DisconnectReason.loggedOut) {
-                console.log(chalk.red('[BOT] Connection closed. Logged out.'));
+                console.log(chalk.red('[BOT] Logged out. Delete session and restart.'));
                 process.exit(0);
             } else {
-                console.log(chalk.yellow(`[BOT] Connection closed. Reason: ${reason}. Reconnecting...`));
-                startBot();
+                retryCount++;
+                const delay = Math.min(retryCount * 5000, 30000); // Exponential backoff
+                console.log(chalk.cyan(`[BOT] Reconnecting in ${delay/1000}s... (Attempt ${retryCount})`));
+                setTimeout(startBot, delay);
             }
         } else if (connection === 'open') {
             currentQR = null;
+            retryCount = 0;
             console.log(chalk.green('[BOT] JAMZ-MD is now Online!'));
         }
     });
 
     sock.ev.on('contacts.update', update => {
         for (let contact of update) {
-            let id = sock.decodeJid(contact.id);
+            let id = decodeJid(contact.id);
             if (store && store.contacts) store.contacts[id] = { id, name: contact.notify };
         }
     });
@@ -173,7 +180,7 @@ const gracefulShutdown = () => {
         store.writeToFile(config.storePath);
         console.log(chalk.green('[SYSTEM] Store saved.'));
     } catch (e) {
-        console.error(chalk.red('[SYSTEM] Failed to save store during shutdown:'), e);
+        // console.error(chalk.red('[SYSTEM] Failed to save store during shutdown:'), e);
     }
     process.exit(0);
 };
