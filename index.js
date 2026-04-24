@@ -97,21 +97,34 @@ async function startBot() {
         if (type !== 'notify') return;
         const msg = messages[0];
         if (!msg.message) return;
-        if (msg.key.fromMe) return;
 
-        // Unwrap nested messages (ephemeral, view-once, etc.)
+        // Sender & Owner Detection
+        const botId = sock.user?.id ? (jidDecode(sock.user.id)?.user + '@s.whatsapp.net') : null;
+        const ownerNumber = (process.env.BOT_OWNER_WA_ID || '256706106326').replace(/\D/g, '');
+        
+        const sender = msg.key.fromMe ? botId : (msg.key.participant || msg.key.remoteJid);
+        const isOwner = (sender && sender.split('@')[0] === ownerNumber) || (botId && botId.split('@')[0] === ownerNumber);
+
+        // Bypass fromMe for Owner
+        if (msg.key.fromMe && !isOwner) {
+            console.log(`[MSG] Ignored: fromMe and not owner (${msg.key.id})`);
+            return;
+        }
+
+        // Comprehensive Unwrapping
         const unwrap = (m) => {
-            if (m?.ephemeralMessage) return unwrap(m.ephemeralMessage.message);
-            if (m?.viewOnceMessage) return unwrap(m.viewOnceMessage.message);
-            if (m?.viewOnceMessageV2) return unwrap(m.viewOnceMessageV2.message);
-            if (m?.documentWithCaptionMessage) return unwrap(m.documentWithCaptionMessage.message);
+            if (!m) return m;
+            if (m.ephemeralMessage) return unwrap(m.ephemeralMessage.message);
+            if (m.viewOnceMessage) return unwrap(m.viewOnceMessage.message);
+            if (m.viewOnceMessageV2) return unwrap(m.viewOnceMessageV2.message);
+            if (m.viewOnceMessageV2Extension) return unwrap(m.viewOnceMessageV2Extension.message);
+            if (m.documentWithCaptionMessage) return unwrap(m.documentWithCaptionMessage.message);
             return m;
         };
         msg.message = unwrap(msg.message);
 
         const from = msg.key.remoteJid;
-        const sender = msg.key.participant || msg.key.remoteJid;
-        const body = (
+        let body = (
             msg.message?.conversation ||
             msg.message?.extendedTextMessage?.text ||
             msg.message?.imageMessage?.caption ||
@@ -119,11 +132,17 @@ async function startBot() {
             msg.message?.buttonsResponseMessage?.selectedButtonId ||
             msg.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
             msg.message?.templateButtonReplyMessage?.selectedId ||
+            msg.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson ||
             msg.message?.documentMessage?.caption ||
             ''
         );
+        // Handle interactive JSON if applicable
+        if (body && body.includes('"id":')) {
+            try { body = JSON.parse(body).id; } catch {}
+        }
 
-        console.log(`[MSG] From: ${sender}, Type: ${Object.keys(msg.message)[0] || 'unknown'}, Body: ${body.slice(0, 50)}`);
+        const messageType = Object.keys(msg.message)[0] || 'unknown';
+        console.log(`[MSG] From: ${sender} | Type: ${messageType} | Body: ${body.slice(0, 50).replace(/\n/g, ' ')}`);
         
         const prefixes = ['.', '/', '🫠', '#'];
         const prefix = prefixes.find(p => body.startsWith(p));
@@ -143,7 +162,6 @@ async function startBot() {
         if (command) {
             console.log(`[CMD] Executing: ${commandName} for ${sender}`);
             try {
-                const isOwner = sender.split('@')[0] === (process.env.BOT_OWNER_WA_ID?.split('@')[0] || '256706106326');
                 await command.execute(sock, msg, { args, body, text, prefix, commandName, isOwner, plugins });
             } catch (e) {
                 console.error(`Error executing command ${commandName}:`, e);
