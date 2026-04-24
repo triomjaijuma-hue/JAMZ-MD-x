@@ -1,5 +1,15 @@
-import * as baileysModule from '@whiskeysockets/baileys';
-const downloadMediaMessage = baileysModule.downloadMediaMessage || (baileysModule.default && baileysModule.default.downloadMediaMessage);
+import * as baileysNS from '@whiskeysockets/baileys';
+
+// Robust export extraction helper
+const getBaileysExport = (prop) => {
+    if (baileysNS[prop] !== undefined) return baileysNS[prop];
+    if (baileysNS.default && typeof baileysNS.default === 'object' && baileysNS.default[prop] !== undefined) {
+        return baileysNS.default[prop];
+    }
+    return undefined;
+};
+
+const downloadMediaMessage = getBaileysExport('downloadMediaMessage');
 import axios from 'axios';
 
 export default {
