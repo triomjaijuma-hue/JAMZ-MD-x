@@ -11,12 +11,16 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import 'dotenv/config';
+import { startServer } from './lib/server.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const logger = pino({ level: 'silent' });
 const plugins = new Map();
+
+let currentSock = null;
+let currentQR = null;
 
 // Load Plugins
 async function loadPlugins() {
@@ -54,6 +58,8 @@ async function startBot() {
         browser: ['JAMZ-MD', 'Chrome', '1.0.0']
     });
 
+    currentSock = sock;
+
     if (!sock.authState.creds.registered) {
         const phoneNumber = process.env.BOT_NUMBER || '256706106326';
         setTimeout(async () => {
@@ -65,12 +71,16 @@ async function startBot() {
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect } = update;
+        const { connection, lastDisconnect, qr } = update;
+        if (qr) currentQR = qr;
+
         if (connection === 'close') {
+            currentQR = null;
             const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
             console.log('Connection closed. Reconnecting...', shouldReconnect);
             if (shouldReconnect) startBot();
         } else if (connection === 'open') {
+            currentQR = null;
             console.log('JAMZ-MD Connected!');
         }
     });
@@ -112,4 +122,7 @@ async function startBot() {
     return sock;
 }
 
-loadPlugins().then(() => startBot());
+loadPlugins().then(() => {
+    startBot();
+    startServer(() => ({ sock: currentSock, qr: currentQR }));
+});

@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JAMZ-MD - Bot Pairing</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background-color: #fff;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+        h1 {
+            color: #128c7e;
+            margin-bottom: 1.5rem;
+        }
+        .qr-container {
+            margin: 1.5rem 0;
+            min-height: 200px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            border: 1px dashed #ccc;
+        }
+        #qr-image {
+            max-width: 100%;
+            display: none;
+        }
+        .pairing-container {
+            margin-top: 1.5rem;
+            border-top: 1px solid #eee;
+            padding-top: 1.5rem;
+        }
+        input {
+            width: 100%;
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            padding: 0.75rem;
+            background-color: #25d366;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #128c7e;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        #pairing-result {
+            margin-top: 1rem;
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #075e54;
+            letter-spacing: 2px;
+        }
+        .status {
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
+        }
+        .status-online { color: #25d366; }
+        .status-offline { color: #ff3b30; }
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #128c7e;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 2s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>JAMZ-MD Pairing</h1>
+        <div id="status-text" class="status">Checking status...</div>
+
+        <div id="qr-section">
+            <p>Scan the QR code with WhatsApp:</p>
+            <div class="qr-container">
+                <div id="qr-loading" class="loading-spinner"></div>
+                <img id="qr-image" alt="WhatsApp QR Code">
+                <p id="qr-error" style="display: none; color: red;">QR not available. Try pairing code or refresh.</p>
+            </div>
+            <button onclick="fetchQR()">Refresh QR</button>
+        </div>
+
+        <div class="pairing-container">
+            <p>Or get a pairing code:</p>
+            <input type="text" id="phone-number" placeholder="Phone number (e.g. 256706106326)">
+            <button id="pair-btn" onclick="requestPairingCode()">Get Pairing Code</button>
+            <div id="pairing-result"></div>
+        </div>
+    </div>
+
+    <script>
+        async function checkStatus() {
+            try {
+                const res = await fetch('/api/status');
+                const data = await res.json();
+                const statusText = document.getElementById('status-text');
+                
+                if (data.loggedIn) {
+                    statusText.innerHTML = '<span class="status-online">● Bot is logged in and ready!</span>';
+                    document.getElementById('qr-section').style.display = 'none';
+                    document.querySelector('.pairing-container').style.display = 'none';
+                } else if (data.connected) {
+                    statusText.innerHTML = '<span class="status-online">● Server is online, waiting for pairing...</span>';
+                } else {
+                    statusText.innerHTML = '<span class="status-offline">● Server is offline or reconnecting...</span>';
+                }
+            } catch (err) {
+                console.error('Status check failed', err);
+            }
+        }
+
+        async function fetchQR() {
+            const img = document.getElementById('qr-image');
+            const loading = document.getElementById('qr-loading');
+            const error = document.getElementById('qr-error');
+            
+            loading.style.display = 'block';
+            img.style.display = 'none';
+            error.style.display = 'none';
+
+            try {
+                const res = await fetch('/api/qr');
+                if (!res.ok) throw new Error('QR not available');
+                const data = await res.json();
+                img.src = data.qrImageUrl;
+                img.style.display = 'block';
+                loading.style.display = 'none';
+            } catch (err) {
+                loading.style.display = 'none';
+                error.style.display = 'block';
+            }
+        }
+
+        async function requestPairingCode() {
+            const phoneNumber = document.getElementById('phone-number').value.replace(/[^0-9]/g, '');
+            const resultDiv = document.getElementById('pairing-result');
+            const pairBtn = document.getElementById('pair-btn');
+
+            if (!phoneNumber) {
+                alert('Please enter a phone number');
+                return;
+            }
+
+            pairBtn.disabled = true;
+            resultDiv.innerText = 'Requesting...';
+
+            try {
+                const res = await fetch('/api/pairing-code', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phoneNumber })
+                });
+                const data = await res.json();
+                
+                if (data.code) {
+                    resultDiv.innerText = data.code;
+                } else {
+                    resultDiv.innerText = 'Error: ' + (data.error || 'Failed to get code');
+                }
+            } catch (err) {
+                resultDiv.innerText = 'Error: Request failed';
+            } finally {
+                pairBtn.disabled = false;
+            }
+        }
+
+        // Initial checks
+        checkStatus();
+        fetchQR();
+        
+        // Refresh status every 10 seconds
+        setInterval(checkStatus, 10000);
+        // Refresh QR every 30 seconds if visible
+        setInterval(() => {
+            if (document.getElementById('qr-section').style.display !== 'none') {
+                fetchQR();
+            }
+        }, 30000);
+    </script>
+</body>
+</html>
